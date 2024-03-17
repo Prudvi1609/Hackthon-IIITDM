@@ -1,0 +1,93 @@
+#include <TinyGPS.h>
+#include <SoftwareSerial.h>
+#include <Wire.h>
+#include <LiquidCrystal.h>
+
+SoftwareSerial Gsm(8, 9);  // Software Serial for GSM module
+char phone_no[] = "+911234567890";  // Replace with the emergency phone number
+
+TinyGPS gps;  // GPS object
+int buttonPin = 10;  // Pin for the push button
+int gyroscopePin = A0;  // Analog pin for gyroscope
+int threshold = 500;  // Adjust this threshold for accident detection
+unsigned long accidentTime = 0;  // Timestamp for accident
+boolean accidentDetected = false;
+
+LiquidCrystal lcd(12, 11, 5, 4, 3, 2); // Pins for LCD
+
+void setup() {
+  Serial.begin(9600);
+  Gsm.begin(9600);
+  lcd.begin(16, 2); // Initialize LCD
+  pinMode(buttonPin, INPUT_PULLUP);  // Button with internal pull-up resistor
+  pinMode(gyroscopePin, INPUT);
+  lcd.print("System Ready");
+}
+
+void loop() {
+  int buttonState = digitalRead(buttonPin);
+
+  if (buttonState == LOW) {
+    // Button is pressed, no action needed
+    delay(1000);  // Debounce delay
+  } else {
+    int gyroscopeValue = analogRead(gyroscopePin);
+
+    if (gyroscopeValue > threshold && !accidentDetected) {
+      // Accident detected
+      accidentTime = millis();
+      accidentDetected = true;
+      lcd.clear();
+      lcd.print("Accident Detected");
+      lcd.setCursor(0, 1);
+      lcd.print("Waiting for 10s");
+    }
+
+    if (accidentDetected && millis() - accidentTime >= 10000) {
+      // Waited for 10 seconds, check if the button is pressed
+      int buttonStateAfterDelay = digitalRead(buttonPin);
+
+      if (buttonStateAfterDelay == LOW) {
+        // Button is pressed, user is safe
+        accidentDetected = false;
+        lcd.clear();
+        lcd.print("User is Safe");
+        delay(1000);  // Debounce delay
+      } else {
+        // Send location, make an emergency call, and display status
+        sendLocationAndCall();
+      }
+    }
+  }
+}
+
+void sendLocationAndCall() {
+  float flat, flon;
+  unsigned long age;
+  gps.f_get_position(&flat, &flon, &age);
+
+  // Send SMS with GPS location
+  Gsm.print("AT+CMGF=1\r");
+  delay(400);
+  Gsm.print("AT+CMGS=\"");
+  Gsm.print(phone_no);
+  Gsm.println("\"");
+  Gsm.print("Accident detected at: http://maps.google.com/maps?q=loc:");
+  Gsm.print(flat == TinyGPS::GPS_INVALID_F_ANGLE ? 0.0 : flat, 6);
+  Gsm.print(",");
+  Gsm.print(flon == TinyGPS ::GPS_INVALID_F_ANGLE ? 0.0 : flon, 6);
+  Gsm.println((char)26);
+  delay(200);
+
+  // Make an emergency call
+  Gsm.println("ATD" + String(phone_no) + ";");
+  delay(15000);  // Call duration (adjust as needed)
+  Gsm.println("ATH");
+  delay(1000);
+
+  // Display status
+  lcd.clear();
+  lcd.print("Emergency Call");
+  lcd.setCursor(0, 1);
+  lcd.print("Location Sent");
+}
